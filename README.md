@@ -1,20 +1,72 @@
 # Query Tuning Clinic: E-Commerce Optimization Case Study
 
-A structured, end-to-end PostgreSQL performance engineering case study demonstrating a multi-stage systematic optimization of a 1.2-million-row e-commerce database. This repository walks through diagnosing catastrophic bottlenecks, applying specialized index strategies (B-tree, Functional, GIN, Partial, Covering, BRIN), restructuring query execution plans, denormalizing via materialized views, implementing declarative table partitioning, and benchmarking transaction connection pooling with PgBouncer.
+[![PostgreSQL](https://img.shields.io/badge/PostgreSQL-15--Alpine-336791?logo=postgresql&logoColor=white)](https://www.postgresql.org/)
+[![PgBouncer](https://img.shields.io/badge/PgBouncer-Transaction_Mode-orange)](https://www.pgbouncer.org/)
+[![Docker](https://img.shields.io/badge/Docker_Compose-Supported-2496ED?logo=docker&logoColor=white)](https://www.docker.com/)
+[![CI](https://img.shields.io/badge/CI-Automated_Suite-brightgreen)](https://github.com/crnjihia/query-tuning-clinic/actions)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+
+A structured, production-grade PostgreSQL performance engineering case study demonstrating a multi-stage systematic optimization of a **1.2-million-row** e-commerce database. This repository walks through diagnosing catastrophic full-table bottlenecks, designing targeted indexing strategies (B-tree, Functional, GIN, Partial, Covering, BRIN), rewriting execution plans, denormalizing via materialized views, implementing declarative table partitioning, and benchmarking transaction connection pooling with PgBouncer.
 
 Every optimization is backed by reproducible benchmarks, exact execution plans (`EXPLAIN (ANALYZE, BUFFERS)`), and I/O buffer accounting.
 
 ---
 
+## Visual Execution Plan in DBeaver
+
+Below is the verified graphical execution plan captured in **DBeaver** connected through **PgBouncer** (port `6432`), proving sub-millisecond execution (**0.198 ms**) across a partitioned 1.2M-row schema using covering indexes and lateral joins:
+
+![DBeaver Visual Execution Plan](docs/assets/dbeaver_execution_plan.png)
+
+### Plan Node Analysis (From Screenshot)
+- **Root Node (`Nested Loop`)**: Total execution time **0.198 ms** with Cost `28.99..37.04`.
+- **Customer Lookup (`Index Scan customers`)**: Satisfied in **0.022 ms** via `idx_customers_email_lower` matching `LOWER(c.email) = LOWER('user2500@example.com')`.
+- **Pre-Aggregated Join (`Aggregate`)**: Cumulative aggregation resolved in **0.173 ms**.
+- **Partitioned Table Scans (`Append`)**:
+  - `Index Only Scan orders_2020` (**0.028 ms**)
+  - `Index Only Scan orders_2021` (**0.018 ms**)
+  - `Index Only Scan orders_2022` (**0.020 ms**)
+  - `Index Only Scan orders_2023` (**0.019 ms**)
+  - `Index Only Scan orders_2024` (**0.018 ms**)
+  - `Seq Scan orders_default` (**0.004 ms**)
+- **Heap Fetches**: **0** — All required payload columns (`order_total`, `order_status`) are retrieved directly from index leaf pages via `INCLUDE`.
+
+---
+
 ## Portfolio Context
 
-This project is the query optimization study within a six-part portfolio of production PostgreSQL architectures:
+This project is the query optimization case study within a six-part portfolio of production PostgreSQL architectures:
 1. **Multi-Tenancy** — Row-Level Security (RLS) & schema isolation
 2. **Time-Series** — TimescaleDB hypertables, compression & continuous aggregates
 3. **Hierarchical Data Modeling** — Closure tables, recursive CTEs & `ltree`
 4. **Inventory Correctness** — Isolation levels, optimistic locking & pessimistic reservation semantics
 5. **Geospatial Dispatch** — PostGIS spatial indexing, KNN nearest-neighbor & pgRouting
 6. **Query Tuning Clinic (This Repository)** — Deep query planning, index internals, partitioning & PgBouncer pooling
+
+---
+
+## Architectural Workflow
+
+```mermaid
+flowchart TD
+    Client[Application / pgbench / DBeaver] -->|Port 6432| PgBouncer[PgBouncer Connection Pooler\nTransaction Mode | max_client_conn=1000]
+    PgBouncer -->|20 Server Connections| PG[PostgreSQL 15 Engine\nshared_preload_libraries=pg_stat_statements]
+    
+    subgraph Storage & Partitioning
+        PG --> Customers[customers Table\n5,000 Rows | 760 kB\nidx_customers_email_lower]
+        PG --> PartParent[orders Partition Parent\nRange Partitioned by order_date]
+        PartParent --> O2020[orders_2020]
+        PartParent --> O2021[orders_2021]
+        PartParent --> O2022[orders_2022]
+        PartParent --> O2023[orders_2023]
+        PartParent --> O2024[orders_2024]
+        PartParent --> ODef[orders_default]
+    end
+
+    subgraph Caching & Denormalization
+        PG --> MV[mv_order_summary\nMaterialized View | 0.04 ms reads\nConcurrent Refresh via UNIQUE Index]
+    end
+```
 
 ---
 
@@ -32,7 +84,16 @@ query-tuning-clinic/
 ├── benchmarks/
 │   ├── pgbench_before.sql         # pgbench script for unoptimised baseline workload
 │   └── pgbench_after.sql          # pgbench script for fully optimized workload
+├── docs/
+│   └── assets/
+│       └── dbeaver_execution_plan.png  # DBeaver graphical plan verification
+├── scripts/
+│   └── run_clinic.sh              # Automated end-to-end benchmark test runner
+├── .github/
+│   └── workflows/
+│       └── ci.yml                 # Automated Docker Compose CI validation suite
 ├── .gitignore
+├── LICENSE
 └── README.md
 ```
 
@@ -64,7 +125,7 @@ The table below summarizes query and transaction latencies as the system progres
 |---|---|---|---|---|---|
 | **Stage 1** | **Diagnosis (Baseline)** | Correlated Subquery Customer Lifetime Spend | — | **4,200 ms** | Baseline |
 | **Stage 2** | **Indexing** | Order Lookup by Email (`idx_orders_customer_email`) | 111.6 ms | **1.65 ms** | **67x faster** |
-| **Stage 2** | **Covering Index** | Customer Order History (`INCLUDE` Index-Only Scan) | 104.8 ms | **0.13 ms** | **806x faster** |
+| **Stage 2** | **Covering Index** | Customer Order History (`INCLUDE` Index-Only Scan) | 104.8 ms | **0.13 ms** | **806x faster** (`Heap Fetches: 0`) |
 | **Stage 3** | **Query Rewrite** | Correlated Subquery → `LEFT JOIN LATERAL` + `LOWER()` | 4,200 ms | **0.17 ms** | **>24,000x faster** |
 | **Stage 4** | **Denormalization** | Customer Order Summary Aggregation (`mv_order_summary`) | 162.1 ms | **0.04 ms** | **4,050x faster** |
 | **Stage 5** | **Partitioning** | 1-Year Temporal Range Aggregation (`orders_2023`) | 140.2 ms (30k blocks) | **110.1 ms (6.3k blocks)** | **80% I/O reduction** |
@@ -160,7 +221,7 @@ docker exec -i qtclinic-db psql -U postgres -d shop -f /sql/04_rewrite_queries.s
    - *Before*: `WHERE UPPER(c.email) = 'USER2500@EXAMPLE.COM'` (Sequential scan, row-by-row `UPPER()` evaluation).
    - *After*: `WHERE LOWER(c.email) = LOWER('user2500@example.com')` (Direct `Index Scan` on `idx_customers_email_lower`).
 2. **Eliminating Correlated Subqueries**:
-   - Replaced correlated subqueries with a `LEFT JOIN LATERAL` (or derived group join) leveraging the covering index `idx_orders_customer_covering`.
+   - Replaced correlated subqueries with a `LEFT JOIN LATERAL` leveraging the covering index `idx_orders_customer_covering`.
 
 #### Rewritten Query:
 ```sql
@@ -308,8 +369,8 @@ docker exec -e PGPASSWORD=postgres qtclinic-db pgbench -h pgbouncer -p 6432 -U p
 | Mode | Clients | Server Connections | Latency Average | Throughput |
 |---|---|---|---|---|
 | Direct Unoptimised | 2 | 2 | 101.62 ms | **19.68 TPS** |
-| Direct Optimised | 10 | 10 | 16.91 ms | **591.38 TPS** |
-| **PgBouncer Transaction Pool** | **50** | **20 (Fixed)** | **79.90 ms** | **625.75 TPS** |
+| Direct Optimised | 10 | 10 | 15.52 ms | **644.17 TPS** |
+| **PgBouncer Transaction Pool** | **50** | **20 (Fixed)** | **82.05 ms** | **609.38 TPS** |
 | PgBouncer Simple Read | 10 | 10 | 2.37 ms | **4,210.56 TPS** |
 
 ---
@@ -349,18 +410,25 @@ LIMIT 5;
 
 ---
 
+## DBeaver Connection & Visual Plan Guide
+
+1. **Connect**:
+   - Host: `localhost` | Port: `6432` (PgBouncer) or `5432` (PostgreSQL)
+   - Database: `shop` | Username: `postgres` | Password: `postgres`
+2. **Visual Execution Plan**:
+   - Open a SQL Editor (`Ctrl + ]`).
+   - Paste only the pure `SELECT` statement (without `EXPLAIN`).
+   - Press **`Ctrl + Shift + E`** to render the color-coded visual execution tree.
+   *(Note: If you write `EXPLAIN (ANALYZE, BUFFERS) SELECT ...`, execute with `Ctrl + Enter` instead of `Ctrl + Shift + E` to prevent double-wrapping syntax errors).*
+
+---
+
 ## Verification & Teardown
 
-To verify the complete test suite from end to end:
+To run the automated suite or clean up:
 ```bash
-# Verify row count and table structure
-docker exec qtclinic-db psql -U postgres -d shop -c "SELECT COUNT(*) FROM customers; SELECT COUNT(*) FROM orders;"
-
-# Run the full diagnostic and tuning workflow
-docker exec -i qtclinic-db psql -U postgres -d shop -f /sql/02_diagnose.sql
-docker exec -i qtclinic-db psql -U postgres -d shop -f /sql/03_add_indexes.sql
-docker exec -i qtclinic-db psql -U postgres -d shop -f /sql/04_rewrite_queries.sql
-docker exec -i qtclinic-db psql -U postgres -d shop -f /sql/05_partition_orders.sql
+# Automated run of all stages:
+chmod +x scripts/run_clinic.sh && ./scripts/run_clinic.sh
 
 # Clean teardown
 docker compose down -v
