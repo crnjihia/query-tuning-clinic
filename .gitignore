@@ -1,0 +1,15 @@
+# PostgreSQL runtime data & WAL
+data/
+db_data/
+pg_wal/
+*.wal
+
+# Generated datasets and exports
+*.csv
+*.tsv
+*.dump
+*.sql.gz
+
+# Environment and logs
+.env
+*.log
