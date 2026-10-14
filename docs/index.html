@@ -1,0 +1,1378 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Query Tuning Clinic | PostgreSQL 15 Performance Engineering Case Study</title>
+  <meta name="description" content="Production-grade PostgreSQL 15 performance optimization: 1.2M rows tuned from 4,200ms to 0.168ms (>24,000x speedup). Interactive visual execution plans, covering index mechanics, declarative range partitioning, and PgBouncer connection pooling.">
+  <meta name="author" content="Christopher Njihia">
+  <meta name="keywords" content="PostgreSQL, Query Optimization, Database Tuning, EXPLAIN ANALYZE, PgBouncer, Indexing, Partitioning, SQL, Performance Engineering">
+  
+  <!-- Open Graph / Social Media -->
+  <meta property="og:type" content="website">
+  <meta property="og:url" content="https://crnjihia.github.io/query-tuning-clinic/">
+  <meta property="og:title" content="Query Tuning Clinic | PostgreSQL 15 Performance Engineering">
+  <meta property="og:description" content="Tuning a 1.2M-row e-commerce database from 4,200ms to 0.168ms (>24,000x faster). Interactive plans, covering indexes, declarative partitioning, and PgBouncer pooling.">
+  <meta property="og:image" content="https://crnjihia.github.io/query-tuning-clinic/assets/dbeaver_execution_plan.png">
+  
+  <!-- Twitter -->
+  <meta property="twitter:card" content="summary_large_image">
+  <meta property="twitter:title" content="Query Tuning Clinic | PostgreSQL 15 Performance Engineering">
+  <meta property="twitter:description" content="Tuning a 1.2M-row database from 4.2s to 0.168ms with exact EXPLAIN (ANALYZE, BUFFERS) accounting.">
+  <meta property="twitter:image" content="https://crnjihia.github.io/query-tuning-clinic/assets/dbeaver_execution_plan.png">
+
+  <!-- Favicon -->
+  <link rel="icon" type="image/svg+xml" href="favicon.svg">
+
+  <!-- Google Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+
+  <!-- Stylesheet -->
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+  <!-- Navigation Bar -->
+  <header class="navbar">
+    <div class="container nav-container">
+      <a href="#" class="brand">
+        <svg viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <rect width="64" height="64" rx="14" fill="#0f172a" stroke="#334155" stroke-width="2"/>
+          <ellipse cx="32" cy="19" rx="16" ry="6" fill="#1e293b" stroke="#38bdf8" stroke-width="2.5" />
+          <path d="M 16 19 V 29 C 16 33 48 33 48 29 V 19" fill="none" stroke="#3b82f6" stroke-width="2.5" />
+          <path d="M 16 29 V 39 C 16 43 48 43 48 39 V 29" fill="none" stroke="#6366f1" stroke-width="2.5" />
+          <polygon points="40,24 29,38 36,38 32,54 47,36 39,36" fill="#f59e0b" />
+        </svg>
+        <span>Query Tuning Clinic</span>
+        <span class="brand-badge">PG 15 &bull; 1.2M ROWS</span>
+      </a>
+
+      <nav>
+        <ul class="nav-links">
+          <li><a href="#benchmarks" class="nav-link">Benchmarks</a></li>
+          <li><a href="#dbeaver-plan" class="nav-link">Visual Plan</a></li>
+          <li><a href="#stages" class="nav-link">6 Tuning Stages</a></li>
+          <li><a href="#indexes" class="nav-link">Index Matrix</a></li>
+          <li><a href="#simulator" class="nav-link">Simulator</a></li>
+          <li><a href="#architecture" class="nav-link">Architecture</a></li>
+          <li><a href="#quickstart" class="nav-link">Quickstart</a></li>
+        </ul>
+      </nav>
+
+      <div class="nav-actions">
+        <a href="https://github.com/crnjihia/query-tuning-clinic" target="_blank" rel="noopener noreferrer" class="btn btn-secondary btn-sm">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+            <path fill-rule="evenodd" clip-rule="evenodd" d="M12 2C6.477 2 2 6.484 2 12.017c0 4.425 2.865 8.18 6.839 9.504.5.092.682-.217.682-.483 0-.237-.008-.868-.013-1.703-2.782.605-3.369-1.343-3.369-1.343-.454-1.158-1.11-1.466-1.11-1.466-.908-.62.069-.608.069-.608 1.003.07 1.53 1.032 1.53 1.032.892 1.53 2.341 1.088 2.91.832.092-.647.35-1.088.636-1.338-2.22-.253-4.555-1.113-4.555-4.951 0-1.093.39-1.988 1.029-2.688-.103-.253-.446-1.272.098-2.65 0 0 .84-.27 2.75 1.026A9.564 9.564 0 0112 6.844c.85.004 1.705.115 2.504.337 1.909-1.296 2.747-1.027 2.747-1.027.546 1.379.202 2.398.1 2.651.64.7 1.028 1.595 1.028 2.688 0 3.848-2.339 4.695-4.566 4.943.359.309.678.92.678 1.855 0 1.338-.012 2.419-.012 2.747 0 .268.18.58.688.482A10.019 10.019 0 0022 12.017C22 6.484 17.522 2 12 2z"/>
+          </svg>
+          <span>GitHub</span>
+        </a>
+      </div>
+    </div>
+  </header>
+
+  <!-- Hero Section -->
+  <section class="hero">
+    <div class="container">
+      <div class="hero-pill">
+        <span class="dot"></span>
+        <span>PRODUCTION POSTGRESQL 15 PERFORMANCE CLINIC</span>
+      </div>
+
+      <h1 class="hero-title">
+        From 4.2s Bottlenecks to<br>
+        <span class="highlight-gradient">0.168ms Query Precision</span>
+      </h1>
+
+      <p class="hero-description">
+        A structured, production-grade PostgreSQL performance engineering case study demonstrating a multi-stage systematic optimization of a <strong>1.2-million-row</strong> e-commerce database. From diagnosing catastrophic correlated subqueries to covering index leaf lookups (<code style="color: #38bdf8;">Heap Fetches: 0</code>), declarative range partitioning, and PgBouncer connection pooling.
+      </p>
+
+      <div class="hero-cta">
+        <a href="#dbeaver-plan" class="btn btn-primary">
+          <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/><path stroke-linecap="round" stroke-linejoin="round" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"/></svg>
+          <span>Inspect Execution Plan</span>
+        </a>
+        <a href="#stages" class="btn btn-secondary">
+          <span>Explore 6 Stages</span>
+        </a>
+        <a href="#simulator" class="btn btn-secondary">
+          <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+          <span>Run Simulator</span>
+        </a>
+        <a href="#quickstart" class="btn btn-secondary">
+          <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M8 9l3 3-3 3m5 0h3M5 20h14a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>
+          <span>Docker Quickstart</span>
+        </a>
+      </div>
+
+      <!-- Key Metrics HUD Cards -->
+      <div class="metrics-grid">
+        <div class="metric-card" data-theme="cyan">
+          <div class="metric-label">
+            <span>Peak Query Speedup</span>
+            <span class="metric-delta">&uarr; Stage 3</span>
+          </div>
+          <div class="metric-value">>24,000x</div>
+          <div class="metric-sub">4,200 ms &rarr; <strong>0.168 ms</strong></div>
+        </div>
+
+        <div class="metric-card" data-theme="emerald">
+          <div class="metric-label">
+            <span>Buffer Read Cut</span>
+            <span class="metric-delta">&darr; 99.999%</span>
+          </div>
+          <div class="metric-value">99.999%</div>
+          <div class="metric-sub">5,294,464 &rarr; <strong>9 blocks</strong></div>
+        </div>
+
+        <div class="metric-card" data-theme="purple">
+          <div class="metric-label">
+            <span>Covering Index Scan</span>
+            <span class="metric-delta">&bull; Stage 2</span>
+          </div>
+          <div class="metric-value">806x</div>
+          <div class="metric-sub">Index-Only Scan &bull; <strong>Heap Fetches: 0</strong></div>
+        </div>
+
+        <div class="metric-card" data-theme="amber">
+          <div class="metric-label">
+            <span>Partition Pruning I/O</span>
+            <span class="metric-delta">&darr; 80%</span>
+          </div>
+          <div class="metric-value">-80%</div>
+          <div class="metric-sub">30k blocks &rarr; <strong>6.3k blocks</strong></div>
+        </div>
+
+        <div class="metric-card" data-theme="indigo">
+          <div class="metric-label">
+            <span>Concurrency TPS</span>
+            <span class="metric-delta">&uarr; 32x</span>
+          </div>
+          <div class="metric-value">32x</div>
+          <div class="metric-sub">19.7 &rarr; <strong>625.8 TPS</strong> (PgBouncer)</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Verified DBeaver Execution Plan Showcase -->
+  <section id="dbeaver-plan" class="section section-alt">
+    <div class="container">
+      <div class="section-header">
+        <span class="section-tag">Visual Verification</span>
+        <h2 class="section-title">Verified Execution Plan in DBeaver</h2>
+        <p class="section-subtitle">
+          Real execution tree captured in DBeaver connected through the PgBouncer transaction pool (port <code style="color: #38bdf8;">6432</code>), proving sub-millisecond execution (<strong style="color: #10b981;">0.198 ms</strong>) across 1.2M rows.
+        </p>
+      </div>
+
+      <div class="plan-showcase-grid">
+        <!-- Screenshot Card with Zoom -->
+        <div class="plan-screenshot-card" id="open-plan-modal">
+          <div class="plan-screenshot-header">
+            <div class="window-dots">
+              <span></span><span></span><span></span>
+            </div>
+            <div class="window-title">DBeaver Visual Plan — &lt;shop&gt; Script-9 (localhost:6432)</div>
+            <span class="btn btn-sm btn-secondary">Click to Enlarge</span>
+          </div>
+          <div class="plan-img-wrapper">
+            <img src="assets/dbeaver_execution_plan.png" alt="DBeaver Visual Execution Plan captured on PgBouncer" loading="lazy">
+            <div class="zoom-overlay-hint">🔍 Click to Zoom In</div>
+          </div>
+        </div>
+
+        <!-- Interactive Plan Tree Inspector -->
+        <div class="plan-tree-card">
+          <h3>
+            <svg width="20" height="20" fill="none" stroke="#38bdf8" stroke-width="2" viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h7"/></svg>
+            Interactive Plan Node Inspector
+          </h3>
+          <p style="font-size: 0.85rem; color: var(--text-secondary);">
+            Click on any node below to inspect its cost, execution duration, and optimizer behavior:
+          </p>
+
+          <div class="tree-node-list">
+            <div class="tree-node-item active" data-node-id="root">
+              <div class="tree-node-header">
+                <span class="node-type">Nested Loop Left Join</span>
+                <span class="node-time">0.198 ms</span>
+              </div>
+              <div class="node-desc">Cost: 28.99..37.04 &bull; Root orchestrator node</div>
+            </div>
+
+            <div class="tree-node-item" data-node-id="cust-scan">
+              <div class="tree-node-header">
+                <span class="node-type">Index Scan on customers</span>
+                <span class="node-time">0.022 ms</span>
+              </div>
+              <div class="node-desc">idx_customers_email_lower &bull; Case-insensitive hash match</div>
+            </div>
+
+            <div class="tree-node-item" data-node-id="agg">
+              <div class="tree-node-header">
+                <span class="node-type">Aggregate (Lateral Join)</span>
+                <span class="node-time">0.173 ms</span>
+              </div>
+              <div class="node-desc">MAX(order_date) & SUM(order_total) over customer orders</div>
+            </div>
+
+            <div class="tree-node-item" data-node-id="append">
+              <div class="tree-node-header">
+                <span class="node-type">Append (Partitions 2020..2024)</span>
+                <span class="node-time">0.144 ms</span>
+              </div>
+              <div class="node-desc">Traverses child partitions orders_2020 through orders_2024</div>
+            </div>
+
+            <div class="tree-node-item" data-node-id="covering-scan">
+              <div class="tree-node-header">
+                <span class="node-type">Index Only Scan (Covering)</span>
+                <span class="node-time">0.018 ms / part</span>
+              </div>
+              <div class="node-desc">idx_orders_customer_covering &bull; <strong>Heap Fetches: 0</strong></div>
+            </div>
+          </div>
+
+          <!-- Dynamic Node Details Box -->
+          <div class="plan-callout-box">
+            <h4 id="node-detail-title" style="margin-bottom: 0.35rem; color: var(--accent-cyan); font-size: 0.95rem;">
+              Nested Loop Left Join (Root Plan Node)
+            </h4>
+            <div style="display: flex; gap: 1rem; font-family: var(--font-mono); font-size: 0.8rem; margin-bottom: 0.5rem;">
+              <span id="node-detail-cost" style="color: var(--accent-amber);">Cost: 28.99 .. 37.04</span>
+              <span id="node-detail-time" style="color: var(--accent-emerald);">Time: 0.198 ms</span>
+            </div>
+            <p id="node-detail-desc" style="font-size: 0.85rem; line-height: 1.5; margin-bottom: 0.5rem;">
+              The orchestrator node performing an ultra-fast nested loop join between the single indexed customer lookup and the pre-aggregated lateral partition scans. Total query execution finishes in sub-millisecond time.
+            </p>
+            <div style="font-size: 0.8rem; border-top: 1px solid rgba(56, 189, 248, 0.2); padding-top: 0.4rem;">
+              <span style="color: var(--accent-cyan); font-weight: 700;">Diagnostic Proof:</span> 
+              <span id="node-detail-highlight">Root join completed in 0.198 ms with zero disk spills.</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Interactive Benchmark Progression Section -->
+  <section id="benchmarks" class="section">
+    <div class="container">
+      <div class="section-header">
+        <span class="section-tag">Performance Benchmarks</span>
+        <h2 class="section-title">Latency & Throughput Progression</h2>
+        <p class="section-subtitle">
+          Measured on identical hardware (PostgreSQL 15 on Linux x86_64). Toggle below to compare Query Latency, Shared Buffer Page I/O, and Concurrency TPS.
+        </p>
+      </div>
+
+      <div class="benchmark-container">
+        <div class="chart-controls">
+          <div class="tab-group">
+            <button class="tab-btn active" data-metric="latency">Query Latency (ms)</button>
+            <button class="tab-btn" data-metric="buffers">Buffer Page Reads</button>
+            <button class="tab-btn" data-metric="throughput">OLTP Throughput (TPS)</button>
+          </div>
+
+          <div class="chart-legend">
+            <div class="legend-item">
+              <div class="legend-color" style="background: linear-gradient(90deg, #ef4444, #f87171);"></div>
+              <span>Before Tuning (Unoptimised)</span>
+            </div>
+            <div class="legend-item">
+              <div class="legend-color" style="background: linear-gradient(90deg, #10b981, #34d399);"></div>
+              <span>After Tuning (Optimised)</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Visual Bar Comparison View -->
+        <div class="benchmark-bars-view" id="benchmark-bars-container">
+          <!-- Dynamically populated by app.js -->
+        </div>
+
+        <!-- Full Results Table -->
+        <div class="table-responsive">
+          <table class="clinic-table">
+            <thead>
+              <tr>
+                <th>Stage</th>
+                <th>Optimization Technique</th>
+                <th>Target Operation</th>
+                <th>Before Tuning</th>
+                <th>After Tuning</th>
+                <th>Speedup Factor</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><strong>Stage 1</strong></td>
+                <td>Diagnosis (Baseline)</td>
+                <td>Correlated Subquery Lifetime Spend</td>
+                <td style="color: #f87171;">4,200 ms</td>
+                <td>&mdash;</td>
+                <td><span class="speedup-badge" style="color: var(--text-muted); border-color: var(--border-color); background: transparent;">Baseline</span></td>
+              </tr>
+              <tr>
+                <td><strong>Stage 2</strong></td>
+                <td>B-Tree Indexing</td>
+                <td>Order Lookup by Email (<code style="color: #38bdf8;">idx_orders_customer_email</code>)</td>
+                <td style="color: #f87171;">111.6 ms</td>
+                <td style="color: #34d399; font-weight: 700;">1.65 ms</td>
+                <td><span class="speedup-badge">67x faster</span></td>
+              </tr>
+              <tr>
+                <td><strong>Stage 2</strong></td>
+                <td>Covering Index</td>
+                <td>Customer Order History (<code style="color: #38bdf8;">INCLUDE</code> Index-Only)</td>
+                <td style="color: #f87171;">104.8 ms</td>
+                <td style="color: #34d399; font-weight: 700;">0.13 ms</td>
+                <td><span class="speedup-badge">806x faster (Heap: 0)</span></td>
+              </tr>
+              <tr>
+                <td><strong>Stage 3</strong></td>
+                <td>Query Rewrite</td>
+                <td>Correlated Subquery &rarr; <code style="color: #38bdf8;">LEFT JOIN LATERAL</code></td>
+                <td style="color: #f87171;">4,200 ms</td>
+                <td style="color: #34d399; font-weight: 700;">0.17 ms</td>
+                <td><span class="speedup-badge">>24,000x faster</span></td>
+              </tr>
+              <tr>
+                <td><strong>Stage 4</strong></td>
+                <td>Denormalization</td>
+                <td>Customer Order Summary (<code style="color: #38bdf8;">mv_order_summary</code>)</td>
+                <td style="color: #f87171;">162.1 ms</td>
+                <td style="color: #34d399; font-weight: 700;">0.04 ms</td>
+                <td><span class="speedup-badge">4,050x faster</span></td>
+              </tr>
+              <tr>
+                <td><strong>Stage 5</strong></td>
+                <td>Declarative Partitioning</td>
+                <td>1-Year Temporal Range Aggregation (<code style="color: #38bdf8;">orders_2023</code>)</td>
+                <td style="color: #f87171;">140.2 ms (30k blocks)</td>
+                <td style="color: #34d399; font-weight: 700;">110.1 ms (6.3k blocks)</td>
+                <td><span class="speedup-badge">80% I/O reduction</span></td>
+              </tr>
+              <tr>
+                <td><strong>Stage 6</strong></td>
+                <td>Connection Pooling</td>
+                <td>50 Concurrent Clients OLTP Throughput (<code style="color: #38bdf8;">pgbench</code>)</td>
+                <td style="color: #f87171;">19.68 TPS (101.6 ms)</td>
+                <td style="color: #34d399; font-weight: 700;">625.75 TPS (79.9 ms)</td>
+                <td><span class="speedup-badge">32x throughput</span></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- The 6 Clinic Stages Deep Dive -->
+  <section id="stages" class="section section-alt">
+    <div class="container">
+      <div class="section-header">
+        <span class="section-tag">Methodology & Execution</span>
+        <h2 class="section-title">The 6 Clinic Stages: In-Depth Breakdown</h2>
+        <p class="section-subtitle">
+          Step-by-step performance engineering walkthrough with exact execution commands, query transformations, and execution plans.
+        </p>
+      </div>
+
+      <!-- Stage Selector Tabs -->
+      <div class="stages-navigator">
+        <div class="stage-nav-item active" data-stage="stage-1">
+          <span class="stage-nav-num">1</span>
+          <span>Diagnosis</span>
+        </div>
+        <div class="stage-nav-item" data-stage="stage-2">
+          <span class="stage-nav-num">2</span>
+          <span>Indexing</span>
+        </div>
+        <div class="stage-nav-item" data-stage="stage-3">
+          <span class="stage-nav-num">3</span>
+          <span>Query Rewrites</span>
+        </div>
+        <div class="stage-nav-item" data-stage="stage-4">
+          <span class="stage-nav-num">4</span>
+          <span>Materialized Views</span>
+        </div>
+        <div class="stage-nav-item" data-stage="stage-5">
+          <span class="stage-nav-num">5</span>
+          <span>Partitioning</span>
+        </div>
+        <div class="stage-nav-item" data-stage="stage-6">
+          <span class="stage-nav-num">6</span>
+          <span>PgBouncer Pooling</span>
+        </div>
+      </div>
+
+      <!-- Stage 1 Panel -->
+      <div class="stage-detail-panel active" id="stage-1">
+        <div class="stage-detail-header">
+          <div class="stage-header-info">
+            <span class="stage-badge">Stage 1</span>
+            <h3>Diagnosis & Baseline Bottlenecks</h3>
+            <p style="color: var(--text-secondary); max-width: 680px;">
+              Analyzing unoptimised schema behavior using <code style="color: #38bdf8;">EXPLAIN (ANALYZE, BUFFERS)</code> to uncover unbounded correlated subqueries, missing foreign key indexes, and CPU-intensive expression mismatches.
+            </p>
+          </div>
+          <div class="stage-metric-pills">
+            <div class="metric-pill danger"><span>⏱ Latency: 4,216 ms</span></div>
+            <div class="metric-pill danger"><span>💾 Shared Reads: 5.29 GB</span></div>
+            <div class="metric-pill"><span>🔍 Plan: Seq Scan</span></div>
+          </div>
+        </div>
+
+        <div class="stage-content-grid">
+          <div>
+            <h4 style="font-size: 1.1rem; margin-bottom: 0.75rem;">Root Cause Findings</h4>
+            <ul style="padding-left: 1.25rem; font-size: 0.9rem; color: var(--text-secondary); line-height: 1.7;">
+              <li><strong>Unbounded Correlated Subqueries:</strong> Running customer lifetime spend forced PostgreSQL to execute <em>two full sequential scans</em> across all 1.2M rows for every single matching customer row.</li>
+              <li><strong>Missing Foreign Key Indexes:</strong> Relational joins between <code style="color: #38bdf8;">customers.id</code> and <code style="color: #38bdf8;">orders.customer_id</code> degrade to a <code style="color: #f87171;">Parallel Seq Scan</code> scanning 30,000 disk blocks (~240 MB).</li>
+              <li><strong>Expression Mismatches:</strong> Evaluating <code style="color: #f87171;">WHERE UPPER(c.email) = 'USER2500@EXAMPLE.COM'</code> prevented standard index lookups, forcing row-by-row function evaluation.</li>
+            </ul>
+
+            <div class="code-box">
+              <div class="code-box-header">
+                <span>sql/02_diagnose.sql — Correlated Anti-Pattern</span>
+                <button class="code-copy-btn" data-copy-target="code-stage-1-sql">Copy SQL</button>
+              </div>
+              <pre id="code-stage-1-sql"><code>EXPLAIN (ANALYZE, BUFFERS)
+SELECT 
+    c.id AS customer_id,
+    c.name,
+    c.email,
+    (SELECT MAX(o.order_date) FROM orders o WHERE o.customer_id = c.id) AS latest_order_date,
+    (SELECT SUM(o.order_total) FROM orders o WHERE o.customer_id = c.id) AS lifetime_spend
+FROM customers c
+WHERE c.email LIKE '%user49%';</code></pre>
+            </div>
+          </div>
+
+          <div>
+            <h4 style="font-size: 1.1rem; margin-bottom: 0.75rem;">Execution Plan Accounting</h4>
+            <div class="code-box">
+              <div class="code-box-header">
+                <span>Stage 1 Baseline EXPLAIN (ANALYZE, BUFFERS)</span>
+                <button class="code-copy-btn" data-copy-target="code-stage-1-plan">Copy Plan</button>
+              </div>
+              <pre id="code-stage-1-plan"><code>Seq Scan on customers c (cost=0.00..9090232.97 rows=101 width=77) 
+  (actual time=252.453..4215.585 rows=30 loops=1)
+  Filter: ((email)::text ~~ '%user49%'::text)
+  Rows Removed by Filter: 4970
+  Buffers: shared hit=45583 read=5294464
+  SubPlan 1
+    ->  Aggregate (cost=45000.60..45000.61 rows=1 width=8) (actual time=65.053..65.053 rows=1 loops=30)
+          Buffers: shared hit=22752 read=2647248
+          ->  Seq Scan on orders o (cost=0.00..45000.00 rows=240 width=8) (actual time=0.275..64.990 rows=240 loops=30)
+                Filter: (customer_id = c.id)
+                Rows Removed by Filter: 1199760
+Planning Time: 0.783 ms
+Execution Time: 4216.595 ms</code></pre>
+            </div>
+            <div class="plan-callout-box" style="margin-top: 1rem;">
+              <strong>Diagnostic Takeaway:</strong> 5,294,464 disk blocks read from cache/disk because of nested table loops. The CPU spent 4.2 seconds just discarding 1.19M rows per subquery loop.
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Stage 2 Panel -->
+      <div class="stage-detail-panel" id="stage-2">
+        <div class="stage-detail-header">
+          <div class="stage-header-info">
+            <span class="stage-badge">Stage 2</span>
+            <h3>Production Index Engineering</h3>
+            <p style="color: var(--text-secondary); max-width: 680px;">
+              Deploying targeted index structures: standard B-Trees, Functional expression indexes, GIN for semi-structured JSONB payloads, Partial indexes for status filtering, Covering indexes for zero heap fetches, and lightweight BRIN for time series.
+            </p>
+          </div>
+          <div class="stage-metric-pills">
+            <div class="metric-pill success"><span>⚡ Point Lookup: 1.65 ms</span></div>
+            <div class="metric-pill success"><span>🚀 Covering Scan: 0.134 ms</span></div>
+            <div class="metric-pill success"><span>📦 Heap Fetches: 0</span></div>
+          </div>
+        </div>
+
+        <div class="stage-content-grid">
+          <div>
+            <h4 style="font-size: 1.1rem; margin-bottom: 0.75rem;">Covering Index Mechanics (<code style="color: #38bdf8;">INCLUDE</code>)</h4>
+            <p style="font-size: 0.9rem; color: var(--text-secondary); line-height: 1.6; margin-bottom: 1rem;">
+              By defining <code style="color: #38bdf8;">orders (customer_id, order_date) INCLUDE (order_total, order_status)</code>, non-key payload columns are stored directly in the index leaf pages. PostgreSQL satisfies the query entirely from the B-tree leaf nodes without touching the underlying heap table pages.
+            </p>
+
+            <div class="code-box">
+              <div class="code-box-header">
+                <span>sql/03_add_indexes.sql — Covering B-Tree</span>
+                <button class="code-copy-btn" data-copy-target="code-stage-2-sql">Copy SQL</button>
+              </div>
+              <pre id="code-stage-2-sql"><code>CREATE INDEX IF NOT EXISTS idx_orders_customer_covering 
+    ON orders (customer_id, order_date) 
+    INCLUDE (order_total, order_status);
+
+-- Functional index for instant LOWER() case-insensitive matches
+CREATE INDEX IF NOT EXISTS idx_customers_email_lower 
+    ON customers (LOWER(email));</code></pre>
+            </div>
+          </div>
+
+          <div>
+            <h4 style="font-size: 1.1rem; margin-bottom: 0.75rem;">Stage 2 Covering Plan Proof</h4>
+            <div class="code-box">
+              <div class="code-box-header">
+                <span>Index-Only Scan with Zero Heap Fetches</span>
+                <button class="code-copy-btn" data-copy-target="code-stage-2-plan">Copy Plan</button>
+              </div>
+              <pre id="code-stage-2-plan"><code>Index Only Scan Backward using idx_orders_customer_covering on orders
+  (cost=0.43..12.61 rows=239 width=27) 
+  (actual time=0.054..0.082 rows=243 loops=1)
+  Index Cond: (customer_id = 2500)
+  Heap Fetches: 0
+  Buffers: shared hit=1 read=5
+Planning Time: 1.190 ms
+Execution Time: 0.134 ms</code></pre>
+            </div>
+            <div class="plan-callout-box" style="margin-top: 1rem;">
+              <strong>Heap Fetches: 0</strong> &bull; Total execution time plunged from 104.8 ms to <strong>0.134 ms</strong> (806x faster) while reading only 6 shared buffer blocks.
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Stage 3 Panel -->
+      <div class="stage-detail-panel" id="stage-3">
+        <div class="stage-detail-header">
+          <div class="stage-header-info">
+            <span class="stage-badge">Stage 3</span>
+            <h3>Query Plan Rewriting & LATERAL Joins</h3>
+            <p style="color: var(--text-secondary); max-width: 680px;">
+              Eliminating correlated subqueries completely by rewriting into a <code style="color: #38bdf8;">LEFT JOIN LATERAL</code> combined with the covering index, dropping execution time from 4,200 ms to 0.168 ms.
+            </p>
+          </div>
+          <div class="stage-metric-pills">
+            <div class="metric-pill success"><span>⚡ Latency: 0.168 ms</span></div>
+            <div class="metric-pill success"><span>🚀 Speedup: >24,000x</span></div>
+            <div class="metric-pill success"><span>💾 Buffer Reads: 9 blocks</span></div>
+          </div>
+        </div>
+
+        <div class="stage-content-grid">
+          <div>
+            <h4 style="font-size: 1.1rem; margin-bottom: 0.75rem;">Before vs After Query Transformation</h4>
+            <div class="code-box">
+              <div class="code-box-header">
+                <span>sql/04_rewrite_queries.sql — LEFT JOIN LATERAL</span>
+                <button class="code-copy-btn" data-copy-target="code-stage-3-sql">Copy SQL</button>
+              </div>
+              <pre id="code-stage-3-sql"><code>SELECT 
+    c.id AS customer_id,
+    c.name,
+    c.email,
+    agg.latest_order_date,
+    agg.lifetime_spend
+FROM customers c
+LEFT JOIN LATERAL (
+    SELECT 
+        MAX(o.order_date) AS latest_order_date,
+        SUM(o.order_total) AS lifetime_spend
+    FROM orders o
+    WHERE o.customer_id = c.id
+) agg ON true
+WHERE LOWER(c.email) = LOWER('user2500@example.com');</code></pre>
+            </div>
+          </div>
+
+          <div>
+            <h4 style="font-size: 1.1rem; margin-bottom: 0.75rem;">Optimized Plan Verification</h4>
+            <div class="code-box">
+              <div class="code-box-header">
+                <span>Stage 3 EXPLAIN (ANALYZE, BUFFERS) Output</span>
+                <button class="code-copy-btn" data-copy-target="code-stage-3-plan">Copy Plan</button>
+              </div>
+              <pre id="code-stage-3-plan"><code>Nested Loop Left Join (cost=14.11..22.16 rows=1 width=77) 
+  (actual time=0.105..0.106 rows=1 loops=1)
+  Buffers: shared hit=5 read=4
+  ->  Index Scan using idx_customers_email_lower on customers c (0.011 ms)
+        Index Cond: (lower((email)::text) = 'user2500@example.com'::text)
+  ->  Aggregate (cost=13.83..13.84 rows=1 width=40) (0.091 ms)
+        ->  Index Only Scan using idx_orders_customer_covering on orders o (0.053 ms)
+              Index Cond: (customer_id = c.id)
+              Heap Fetches: 0
+Planning Time: 0.226 ms
+Execution Time: 0.168 ms</code></pre>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Stage 4 Panel -->
+      <div class="stage-detail-panel" id="stage-4">
+        <div class="stage-detail-header">
+          <div class="stage-header-info">
+            <span class="stage-badge">Stage 4</span>
+            <h3>Denormalization via Materialized Views</h3>
+            <p style="color: var(--text-secondary); max-width: 680px;">
+              Pre-aggregating analytical dashboard KPIs across all 5,000 customers. Enables sub-millisecond lookups with non-blocking concurrent refresh.
+            </p>
+          </div>
+          <div class="stage-metric-pills">
+            <div class="metric-pill success"><span>⚡ Latency: 0.039 ms</span></div>
+            <div class="metric-pill success"><span>🚀 Speedup: 4,050x</span></div>
+            <div class="metric-pill"><span>🔄 Concurrent Refresh</span></div>
+          </div>
+        </div>
+
+        <div class="stage-content-grid">
+          <div>
+            <h4 style="font-size: 1.1rem; margin-bottom: 0.75rem;">Materialized View Definition</h4>
+            <div class="code-box">
+              <div class="code-box-header">
+                <span>sql/04_rewrite_queries.sql — mv_order_summary</span>
+                <button class="code-copy-btn" data-copy-target="code-stage-4-sql">Copy SQL</button>
+              </div>
+              <pre id="code-stage-4-sql"><code>CREATE MATERIALIZED VIEW mv_order_summary AS
+SELECT 
+    customer_id,
+    COUNT(*)                   AS total_orders,
+    SUM(order_total)           AS total_spent,
+    ROUND(AVG(order_total), 2) AS avg_order_value,
+    MAX(order_date)            AS last_order_date
+FROM orders
+GROUP BY customer_id
+WITH DATA;
+
+-- UNIQUE index enables non-blocking background refreshes
+CREATE UNIQUE INDEX idx_mv_order_summary_customer_id 
+    ON mv_order_summary (customer_id);
+
+-- Operational refresh command:
+-- REFRESH MATERIALIZED VIEW CONCURRENTLY mv_order_summary;</code></pre>
+            </div>
+          </div>
+
+          <div>
+            <h4 style="font-size: 1.1rem; margin-bottom: 0.75rem;">Production Architectural Trade-offs</h4>
+            <div class="tradeoff-grid">
+              <div class="tradeoff-box pros">
+                <h4>✓ Advantages</h4>
+                <ul>
+                  <li>Sub-millisecond reads (<strong>0.039 ms</strong>).</li>
+                  <li>Zero CPU or lock contention on active orders table.</li>
+                  <li>Refreshes occur concurrently in background without blocking reads.</li>
+                </ul>
+              </div>
+              <div class="tradeoff-box cons">
+                <h4>⚠ Trade-offs</h4>
+                <ul>
+                  <li>Eventual consistency between scheduled refresh intervals.</li>
+                  <li>Additional WAL generation during concurrent rebuild.</li>
+                </ul>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Stage 5 Panel -->
+      <div class="stage-detail-panel" id="stage-5">
+        <div class="stage-detail-header">
+          <div class="stage-header-info">
+            <span class="stage-badge">Stage 5</span>
+            <h3>Declarative Yearly Range Partitioning</h3>
+            <p style="color: var(--text-secondary); max-width: 680px;">
+              Restructuring monolithic 1.2M-row storage into declarative annual partitions (<code style="color: #38bdf8;">orders_2020</code> through <code style="color: #38bdf8;">orders_2024</code> plus default). Query planner prunes untouched years before execution.
+            </p>
+          </div>
+          <div class="stage-metric-pills">
+            <div class="metric-pill success"><span>✂️ Pruning: 80% I/O Cut</span></div>
+            <div class="metric-pill success"><span>💾 Blocks: 6,329 vs 30,000</span></div>
+            <div class="metric-pill"><span>📅 5 Annual Partitions</span></div>
+          </div>
+        </div>
+
+        <div class="stage-content-grid">
+          <div>
+            <h4 style="font-size: 1.1rem; margin-bottom: 0.75rem;">Partition DDL & Primary Key Rules</h4>
+            <p style="font-size: 0.9rem; color: var(--text-secondary); line-height: 1.6; margin-bottom: 1rem;">
+              In PostgreSQL declarative partitioning, composite primary keys must include the partitioning column: <code style="color: #38bdf8;">PRIMARY KEY (id, order_date)</code>.
+            </p>
+            <div class="code-box">
+              <div class="code-box-header">
+                <span>sql/05_partition_orders.sql — Range Partitioning</span>
+                <button class="code-copy-btn" data-copy-target="code-stage-5-sql">Copy SQL</button>
+              </div>
+              <pre id="code-stage-5-sql"><code>CREATE TABLE orders_partitioned (
+    id BIGINT NOT NULL,
+    customer_id INT NOT NULL,
+    order_date TIMESTAMP NOT NULL,
+    order_total NUMERIC(10, 2) NOT NULL,
+    order_status VARCHAR(20) NOT NULL,
+    PRIMARY KEY (id, order_date)
+) PARTITION BY RANGE (order_date);
+
+CREATE TABLE orders_2023 PARTITION OF orders_partitioned
+    FOR VALUES FROM ('2023-01-01') TO ('2024-01-01');</code></pre>
+            </div>
+          </div>
+
+          <div>
+            <h4 style="font-size: 1.1rem; margin-bottom: 0.75rem;">Partition Pruning Plan Proof</h4>
+            <div class="code-box">
+              <div class="code-box-header">
+                <span>EXPLAIN ANALYZE: Only orders_2023 is queried</span>
+                <button class="code-copy-btn" data-copy-target="code-stage-5-plan">Copy Plan</button>
+              </div>
+              <pre id="code-stage-5-plan"><code>GroupAggregate (cost=27152.60..31330.65 rows=167122 width=48)
+  (actual time=89.975..109.461 rows=12 loops=1)
+  Buffers: shared hit=152236 read=6329
+  ->  Sort (cost=27152.60..27570.41 rows=167122 width=14)
+        Sort Method: external merge Disk: 4120kB
+        ->  Index Scan using orders_2023_order_date_idx on orders_2023 orders
+              Index Cond: ((order_date >= '2023-01-01') AND (order_date < '2024-01-01'))
+Execution Time: 110.173 ms</code></pre>
+            </div>
+            <div class="plan-callout-box" style="margin-top: 1rem;">
+              <strong>Partition Pruning Success:</strong> Partitions 2020, 2021, 2022, 2024, and default were pruned by the optimizer. Buffer reads plummeted from 30,000 blocks to 6,329 blocks (<strong>80% reduction</strong>).
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Stage 6 Panel -->
+      <div class="stage-detail-panel" id="stage-6">
+        <div class="stage-detail-header">
+          <div class="stage-header-info">
+            <span class="stage-badge">Stage 6</span>
+            <h3>Transaction Pooling with PgBouncer</h3>
+            <p style="color: var(--text-secondary); max-width: 680px;">
+              Mitigating process-forking overhead and context switching under high client concurrency using PgBouncer in transaction mode on port <code style="color: #38bdf8;">6432</code>.
+            </p>
+          </div>
+          <div class="stage-metric-pills">
+            <div class="metric-pill success"><span>🚀 Throughput: 625.75 TPS</span></div>
+            <div class="metric-pill success"><span>⚡ Speedup: 32x TPS</span></div>
+            <div class="metric-pill"><span>🔒 Fixed 20 Server Workers</span></div>
+          </div>
+        </div>
+
+        <div class="stage-content-grid">
+          <div>
+            <h4 style="font-size: 1.1rem; margin-bottom: 0.75rem;">Why Transaction Pooling Matters</h4>
+            <p style="font-size: 0.9rem; color: var(--text-secondary); line-height: 1.6; margin-bottom: 1rem;">
+              PostgreSQL allocates a dedicated Linux backend process (~5-10 MB RAM) per client. Under 100+ concurrent connections, process contention cripples performance. PgBouncer allows 1,000 client sockets to share 20 server workers.
+            </p>
+            <div class="code-box">
+              <div class="code-box-header">
+                <span>docker-compose.yml — PgBouncer Configuration</span>
+                <button class="code-copy-btn" data-copy-target="code-stage-6-sql">Copy Config</button>
+              </div>
+              <pre id="code-stage-6-sql"><code>pgbouncer:
+  image: edoburu/pgbouncer:latest
+  environment:
+    POOL_MODE: transaction
+    MAX_CLIENT_CONN: "1000"
+    DEFAULT_POOL_SIZE: "20"
+    LISTEN_PORT: "6432"
+  ports:
+    - "6432:6432"</code></pre>
+            </div>
+          </div>
+
+          <div>
+            <h4 style="font-size: 1.1rem; margin-bottom: 0.75rem;">pgbench Concurrency Comparison</h4>
+            <div class="table-responsive" style="margin-top: 0;">
+              <table class="clinic-table">
+                <thead>
+                  <tr>
+                    <th>Mode</th>
+                    <th>Clients</th>
+                    <th>Latency</th>
+                    <th>Throughput</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <td>Direct Unoptimised</td>
+                    <td>2</td>
+                    <td>101.62 ms</td>
+                    <td style="color: #f87171;">19.68 TPS</td>
+                  </tr>
+                  <tr>
+                    <td>Direct Optimised</td>
+                    <td>10</td>
+                    <td>15.52 ms</td>
+                    <td style="color: #38bdf8;">644.17 TPS</td>
+                  </tr>
+                  <tr>
+                    <td><strong>PgBouncer Pool</strong></td>
+                    <td><strong>50</strong></td>
+                    <td><strong>82.05 ms</strong></td>
+                    <td style="color: #34d399; font-weight: 700;">609.38 TPS</td>
+                  </tr>
+                  <tr>
+                    <td>PgBouncer Simple Read</td>
+                    <td>10</td>
+                    <td>2.37 ms</td>
+                    <td style="color: #a855f7; font-weight: 700;">4,210.56 TPS</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Production Index Engineering Matrix Section -->
+  <section id="indexes" class="section">
+    <div class="container">
+      <div class="section-header">
+        <span class="section-tag">Index Architecture</span>
+        <h2 class="section-title">Production Index Engineering Matrix</h2>
+        <p class="section-subtitle">
+          Catalog of all 8 production indexes created in the clinic. Filter by index type to inspect on-disk footprint and architectural reasoning.
+        </p>
+      </div>
+
+      <!-- Filter Controls -->
+      <div class="index-filter-bar">
+        <button class="filter-btn active" data-filter="all">All Indexes (8)</button>
+        <button class="filter-btn" data-filter="btree">B-Tree</button>
+        <button class="filter-btn" data-filter="covering">Covering (INCLUDE)</button>
+        <button class="filter-btn" data-filter="functional">Functional</button>
+        <button class="filter-btn" data-filter="gin">GIN (JSONB)</button>
+        <button class="filter-btn" data-filter="partial">Partial</button>
+        <button class="filter-btn" data-filter="brin">BRIN</button>
+      </div>
+
+      <!-- Indexes Cards Grid -->
+      <div class="indexes-grid">
+        <!-- 1. idx_orders_customer_covering -->
+        <div class="index-card" data-index-type="covering">
+          <div>
+            <div class="index-header">
+              <span class="index-name">idx_orders_customer_covering</span>
+              <span class="index-badge">Covering B-Tree</span>
+            </div>
+            <div class="index-size">Size: 64 MB &bull; Heap Fetches: 0</div>
+            <div class="index-expression">orders (customer_id, order_date) INCLUDE (order_total, order_status)</div>
+            <div class="index-reasoning">
+              Leaves non-search payload columns directly in index leaf pages; enables queries to be fully satisfied via <strong>Index-Only Scan</strong> without touching disk table pages.
+            </div>
+          </div>
+        </div>
+
+        <!-- 2. idx_orders_date_brin -->
+        <div class="index-card" data-index-type="brin">
+          <div>
+            <div class="index-header">
+              <span class="index-name">idx_orders_date_brin</span>
+              <span class="index-badge" style="background: rgba(16, 185, 129, 0.15); color: #6ee7b7;">BRIN (Block Range)</span>
+            </div>
+            <div class="index-size" style="color: #38bdf8;">Size: 24 kB &bull; 1,000x smaller!</div>
+            <div class="index-expression">orders USING BRIN (order_date)</div>
+            <div class="index-reasoning">
+              Leverages physical block order for sequential append tables. Maps min/max timestamps per block range; consumes only <strong>24 kB</strong> compared to a 26 MB B-tree.
+            </div>
+          </div>
+        </div>
+
+        <!-- 3. idx_customers_email_lower -->
+        <div class="index-card" data-index-type="functional">
+          <div>
+            <div class="index-header">
+              <span class="index-name">idx_customers_email_lower</span>
+              <span class="index-badge">Functional B-Tree</span>
+            </div>
+            <div class="index-size">Size: 216 kB</div>
+            <div class="index-expression">customers (LOWER(email))</div>
+            <div class="index-reasoning">
+              Stores precomputed lowercase hashes for zero-overhead case-insensitive lookups, preventing sequential scans from functions like <code style="color: #38bdf8;">LOWER()</code>.
+            </div>
+          </div>
+        </div>
+
+        <!-- 4. idx_orders_details_gin -->
+        <div class="index-card" data-index-type="gin">
+          <div>
+            <div class="index-header">
+              <span class="index-name">idx_orders_details_gin</span>
+              <span class="index-badge" style="background: rgba(168, 85, 247, 0.15); color: #d8b4fe;">GIN Inverted</span>
+            </div>
+            <div class="index-size">Size: 125 MB</div>
+            <div class="index-expression">orders USING GIN (order_details)</div>
+            <div class="index-reasoning">
+              Maps individual keys and nested attributes inside semi-structured JSONB payloads for lightning-fast JSON containment operators (<code style="color: #38bdf8;">@&gt;</code>).
+            </div>
+          </div>
+        </div>
+
+        <!-- 5. idx_orders_completed_date -->
+        <div class="index-card" data-index-type="partial">
+          <div>
+            <div class="index-header">
+              <span class="index-name">idx_orders_completed_date</span>
+              <span class="index-badge" style="background: rgba(245, 158, 11, 0.15); color: #fde68a;">Partial B-Tree</span>
+            </div>
+            <div class="index-size">Size: 18 MB &bull; Saves 30% Space</div>
+            <div class="index-expression">orders (order_date) WHERE order_status = 'completed'</div>
+            <div class="index-reasoning">
+              Only indexes completed order rows (70% of dataset). Excludes pending/cancelled rows to save RAM and keep the index resident in memory cache.
+            </div>
+          </div>
+        </div>
+
+        <!-- 6. idx_orders_customer_email -->
+        <div class="index-card" data-index-type="btree">
+          <div>
+            <div class="index-header">
+              <span class="index-name">idx_orders_customer_email</span>
+              <span class="index-badge">Standard B-Tree</span>
+            </div>
+            <div class="index-size">Size: 8.7 MB</div>
+            <div class="index-expression">orders (customer_email)</div>
+            <div class="index-reasoning">
+              Accelerates point customer lookups across 1.2M rows from 111.6 ms down to 1.65 ms.
+            </div>
+          </div>
+        </div>
+
+        <!-- 7. idx_orders_customer_id -->
+        <div class="index-card" data-index-type="btree">
+          <div>
+            <div class="index-header">
+              <span class="index-name">idx_orders_customer_id</span>
+              <span class="index-badge">Standard B-Tree</span>
+            </div>
+            <div class="index-size">Size: 8.4 MB</div>
+            <div class="index-expression">orders (customer_id)</div>
+            <div class="index-reasoning">
+              Foreign key index essential for fast relational joins and preventing table-level locks on parent customer modifications.
+            </div>
+          </div>
+        </div>
+
+        <!-- 8. idx_orders_total -->
+        <div class="index-card" data-index-type="btree">
+          <div>
+            <div class="index-header">
+              <span class="index-name">idx_orders_total</span>
+              <span class="index-badge">Standard B-Tree</span>
+            </div>
+            <div class="index-size">Size: 26 MB</div>
+            <div class="index-expression">orders (order_total)</div>
+            <div class="index-reasoning">
+              Satisfies high-value order filtering (<code style="color: #38bdf8;">order_total &gt; 500.00</code>) via Bitmap Index Scans instead of inspecting 1.2M rows.
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Interactive Query Tuning Simulator Section -->
+  <section id="simulator" class="section section-alt">
+    <div class="container">
+      <div class="section-header">
+        <span class="section-tag">Interactive Sandbox</span>
+        <h2 class="section-title">Query Tuning Simulator</h2>
+        <p class="section-subtitle">
+          Test real scenarios from the clinic. Switch between Unoptimised and Optimised execution to compare simulated metrics and planner strategies in real-time.
+        </p>
+      </div>
+
+      <div class="simulator-container">
+        <div class="sim-controls">
+          <div class="sim-select-wrapper">
+            <label for="sim-scenario-select">Select Query Scenario</label>
+            <select id="sim-scenario-select" class="sim-select">
+              <option value="subquery">Correlated Subquery: Customer Lifetime Spend (Stage 3 Rewrite)</option>
+              <option value="email-lookup">Case-Insensitive Point Lookup (Stage 2 Functional Index)</option>
+              <option value="covering">Customer Orders History (Stage 2 Covering Index-Only Scan)</option>
+              <option value="partition">1-Year Temporal Revenue (Stage 5 Partition Pruning)</option>
+              <option value="pgbouncer">50-Client Concurrency Spike (Stage 6 PgBouncer Pooling)</option>
+            </select>
+          </div>
+
+          <div class="sim-mode-toggle">
+            <label>Optimization State</label>
+            <div class="toggle-switch-container">
+              <button id="btn-unopt" class="toggle-btn active unoptimized">Unoptimised</button>
+              <button id="btn-opt" class="toggle-btn">Optimised</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Simulator Dashboard Display -->
+        <div class="sim-dashboard">
+          <div class="sim-metrics-bar">
+            <div class="sim-metric-box">
+              <div class="sim-metric-title">Execution Latency</div>
+              <div class="sim-metric-value" id="sim-val-time" style="color: #f87171;">4,216.59 ms</div>
+            </div>
+            <div class="sim-metric-box">
+              <div class="sim-metric-title">Shared Buffers Read</div>
+              <div class="sim-metric-value" id="sim-val-buffers">5,294,464</div>
+            </div>
+            <div class="sim-metric-box">
+              <div class="sim-metric-title">Heap Page Fetches</div>
+              <div class="sim-metric-value" id="sim-val-fetches">1,200,000</div>
+            </div>
+            <div class="sim-metric-box">
+              <div class="sim-metric-title">Planner Estimated Cost</div>
+              <div class="sim-metric-value" id="sim-val-cost" style="font-size: 1rem; margin-top: 0.5rem; color: var(--accent-amber);">0.00 .. 9090232.97</div>
+            </div>
+          </div>
+
+          <div class="code-box" style="margin-top: 0;">
+            <div class="code-box-header">
+              <span>Executed SQL Statement</span>
+            </div>
+            <pre><code id="sim-sql-display">SELECT c.id, c.name, c.email, ...</code></pre>
+          </div>
+
+          <div class="code-box" style="margin-top: 1rem;">
+            <div class="code-box-header">
+              <span>Execution Plan Strategy</span>
+            </div>
+            <pre><code id="sim-plan-display" style="color: #93c5fd;">Seq Scan on customers -> SubPlan 1 (Seq Scan orders 1.2M)</code></pre>
+          </div>
+
+          <div class="sim-run-btn-container">
+            <button class="btn btn-primary" id="btn-run-sim">
+              <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+              <span>Execute EXPLAIN (ANALYZE, BUFFERS)</span>
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Interactive System Architecture Section -->
+  <section id="architecture" class="section">
+    <div class="container">
+      <div class="section-header">
+        <span class="section-tag">System Topology</span>
+        <h2 class="section-title">End-to-End Architectural Flow</h2>
+        <p class="section-subtitle">
+          How clients, PgBouncer, the PostgreSQL 15 core engine, partitioned storage, and materialized views interact. Click any node to view configuration parameters.
+        </p>
+      </div>
+
+      <div class="arch-diagram-container">
+        <div class="arch-flow-wrapper">
+          <!-- Client Tier -->
+          <div class="arch-tier">
+            <div class="arch-node" data-arch-key="client">
+              <div class="arch-node-title">
+                <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+                <span>Client Applications / pgbench / DBeaver</span>
+              </div>
+              <div class="arch-node-subtitle">Port 6432 (PgBouncer) &bull; Port 5432 (Postgres)</div>
+              <span class="arch-node-badge badge-cyan">Up to 1,000 Concurrent Sockets</span>
+            </div>
+          </div>
+
+          <div class="arch-connector-down"></div>
+
+          <!-- PgBouncer Pooler -->
+          <div class="arch-tier">
+            <div class="arch-node" data-arch-key="pgbouncer">
+              <div class="arch-node-title">
+                <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/></svg>
+                <span>PgBouncer Connection Pooler (Port 6432)</span>
+              </div>
+              <div class="arch-node-subtitle">POOL_MODE = transaction &bull; DEFAULT_POOL_SIZE = 20</div>
+              <span class="arch-node-badge badge-emerald">Fixed 20 Server Workers &bull; Zero Fork Overhead</span>
+            </div>
+          </div>
+
+          <div class="arch-connector-down"></div>
+
+          <!-- PostgreSQL 15 Engine -->
+          <div class="arch-tier">
+            <div class="arch-node active" data-arch-key="postgres">
+              <div class="arch-node-title">
+                <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/></svg>
+                <span>PostgreSQL 15 Core Engine</span>
+              </div>
+              <div class="arch-node-subtitle">shared_preload_libraries = pg_stat_statements &bull; max_connections = 200</div>
+              <span class="arch-node-badge badge-blue">Buffer Cache (128 MB) &bull; WAL &bull; Query Planner</span>
+            </div>
+          </div>
+
+          <div class="arch-connector-down"></div>
+
+          <!-- Partitioned Storage & Materialized Views -->
+          <div style="width: 100%;">
+            <div style="text-align: center; font-size: 0.8rem; font-weight: 700; color: var(--accent-cyan); text-transform: uppercase; margin-bottom: 0.75rem;">
+              Declarative Range Partitions (orders Parent & Child Tables)
+            </div>
+            <div class="partition-cluster">
+              <div class="partition-pill">
+                <strong>orders_2020</strong><br>
+                <span style="font-size: 0.7rem; color: var(--text-muted);">2020 Data</span>
+              </div>
+              <div class="partition-pill">
+                <strong>orders_2021</strong><br>
+                <span style="font-size: 0.7rem; color: var(--text-muted);">2021 Data</span>
+              </div>
+              <div class="partition-pill">
+                <strong>orders_2022</strong><br>
+                <span style="font-size: 0.7rem; color: var(--text-muted);">2022 Data</span>
+              </div>
+              <div class="partition-pill active-partition">
+                <strong>orders_2023</strong><br>
+                <span style="font-size: 0.7rem; color: #6ee7b7;">Active Scan Target</span>
+              </div>
+              <div class="partition-pill">
+                <strong>orders_2024</strong><br>
+                <span style="font-size: 0.7rem; color: var(--text-muted);">2024 Data</span>
+              </div>
+              <div class="partition-pill">
+                <strong>orders_default</strong><br>
+                <span style="font-size: 0.7rem; color: var(--text-muted);">Catch-all</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Dynamic Architecture Details Display -->
+        <div id="arch-details-box" class="plan-callout-box" style="margin-top: 2rem; max-width: 900px; margin-left: auto; margin-right: auto;">
+          <h4 id="arch-details-title" style="color: var(--accent-cyan); margin-bottom: 0.35rem;">
+            PostgreSQL 15 Engine (Port 5432)
+          </h4>
+          <p id="arch-details-text" style="font-size: 0.875rem; color: var(--text-secondary); line-height: 1.6;">
+            Configured with shared_preload_libraries=pg_stat_statements and pg_stat_statements.track=all. Manages shared buffer cache, WAL logging, cost-based query optimizer, and declarative partition pruning.
+          </p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Production Observability Section -->
+  <section class="section section-alt">
+    <div class="container">
+      <div class="section-header">
+        <span class="section-tag">Telemetry & Monitoring</span>
+        <h2 class="section-title">Production Observability with <code style="color: #38bdf8;">pg_stat_statements</code></h2>
+        <p class="section-subtitle">
+          In high-volume production, slow queries must be caught proactively without running continuous manual EXPLAIN calls.
+        </p>
+      </div>
+
+      <div class="stage-content-grid">
+        <div class="code-box">
+          <div class="code-box-header">
+            <span>Top 10 Slowest Queries by Total Cumulative Time</span>
+            <button class="code-copy-btn" data-copy-target="code-obs-slow">Copy SQL</button>
+          </div>
+          <pre id="code-obs-slow"><code>SELECT 
+    calls,
+    ROUND(total_exec_time::numeric, 2) AS total_time_ms,
+    ROUND(mean_exec_time::numeric, 2)  AS mean_time_ms,
+    ROUND((100.0 * total_exec_time / SUM(total_exec_time) OVER())::numeric, 2) AS pct_load,
+    rows,
+    SUBSTRING(query, 1, 80) AS query_preview
+FROM pg_stat_statements
+ORDER BY total_exec_time DESC
+LIMIT 10;</code></pre>
+        </div>
+
+        <div class="code-box">
+          <div class="code-box-header">
+            <span>Buffer-Heavy Queries & Cache-Hit Ratio Monitor (&lt;95% Alert)</span>
+            <button class="code-copy-btn" data-copy-target="code-obs-buffer">Copy SQL</button>
+          </div>
+          <pre id="code-obs-buffer"><code>SELECT 
+    query,
+    calls,
+    shared_blks_hit,
+    shared_blks_read,
+    ROUND((100.0 * shared_blks_hit / NULLIF(shared_blks_hit + shared_blks_read, 0))::numeric, 2) AS cache_hit_ratio
+FROM pg_stat_statements
+WHERE calls > 5
+ORDER BY shared_blks_read DESC
+LIMIT 5;</code></pre>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Quickstart & Clean Reproduction Guide -->
+  <section id="quickstart" class="section">
+    <div class="container">
+      <div class="section-header">
+        <span class="section-tag">Clean Reproduction</span>
+        <h2 class="section-title">Quickstart: Spin Up & Run in 30 Seconds</h2>
+        <p class="section-subtitle">
+          The entire PostgreSQL 15 and PgBouncer environment starts with a single Docker Compose command.
+        </p>
+      </div>
+
+      <div class="terminal-card">
+        <div class="terminal-header">
+          <div class="window-dots"><span></span><span></span><span></span></div>
+          <div class="window-title">bash &bull; terminal</div>
+          <span style="font-size: 0.75rem; color: var(--accent-cyan); font-family: var(--font-mono);">Click any command to copy</span>
+        </div>
+        <div class="terminal-body">
+          <span class="term-comment"># 1. Clone repository and navigate into project directory:</span>
+          <div class="term-cmd">
+            <span class="cmd-text">git clone https://github.com/crnjihia/query-tuning-clinic.git && cd query-tuning-clinic</span>
+            <span class="btn-sm btn-secondary">Copy</span>
+          </div>
+
+          <span class="term-comment"># 2. Spin up PostgreSQL 15 & PgBouncer containers:</span>
+          <div class="term-cmd">
+            <span class="cmd-text">docker compose up -d</span>
+            <span class="btn-sm btn-secondary">Copy</span>
+          </div>
+
+          <span class="term-comment"># 3. Monitor initialization logs until 1.2M seed completes (~15-20s):</span>
+          <div class="term-cmd">
+            <span class="cmd-text">docker logs -f qtclinic-db</span>
+            <span class="btn-sm btn-secondary">Copy</span>
+          </div>
+
+          <span class="term-comment"># 4. Execute the automated benchmark clinic runner:</span>
+          <div class="term-cmd">
+            <span class="cmd-text">chmod +x scripts/run_clinic.sh && ./scripts/run_clinic.sh</span>
+            <span class="btn-sm btn-secondary">Copy</span>
+          </div>
+
+          <span class="term-comment"># 5. Run pgbench concurrency stress test on PgBouncer (port 6432):</span>
+          <div class="term-cmd">
+            <span class="cmd-text">docker exec -e PGPASSWORD=postgres qtclinic-db pgbench -h pgbouncer -p 6432 -U postgres -d shop -t 50 -c 50 -n -M simple -f /benchmarks/pgbench_after.sql</span>
+            <span class="btn-sm btn-secondary">Copy</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Six-Part PostgreSQL Architecture Portfolio -->
+  <section class="section section-alt">
+    <div class="container">
+      <div class="section-header">
+        <span class="section-tag">Portfolio Context</span>
+        <h2 class="section-title">6-Part PostgreSQL Architecture Portfolio</h2>
+        <p class="section-subtitle">
+          This project is part of a curated series demonstrating production database architectures and performance engineering.
+        </p>
+      </div>
+
+      <div class="portfolio-grid">
+        <div class="portfolio-card">
+          <div class="portfolio-num">PART 01</div>
+          <h4>Multi-Tenancy Architecture</h4>
+          <p>Row-Level Security (RLS), tenant schema isolation, and multi-tenant connection pooling.</p>
+        </div>
+
+        <div class="portfolio-card">
+          <div class="portfolio-num">PART 02</div>
+          <h4>Time-Series Engineering</h4>
+          <p>TimescaleDB hypertables, columnar chunk compression, and real-time continuous aggregates.</p>
+        </div>
+
+        <div class="portfolio-card">
+          <div class="portfolio-num">PART 03</div>
+          <h4>Hierarchical Data Modeling</h4>
+          <p>Closure tables, recursive CTEs, and PostgreSQL <code style="color: #38bdf8;">ltree</code> for large org charts.</p>
+        </div>
+
+        <div class="portfolio-card">
+          <div class="portfolio-num">PART 04</div>
+          <h4>Inventory Correctness & Concurrency</h4>
+          <p>Isolation levels, optimistic concurrency control, and pessimistic reservation semantics.</p>
+        </div>
+
+        <div class="portfolio-card">
+          <div class="portfolio-num">PART 05</div>
+          <h4>Geospatial Dispatch & Routing</h4>
+          <p>PostGIS spatial indexing, KNN nearest-neighbor matching, and pgRouting shortest paths.</p>
+        </div>
+
+        <div class="portfolio-card current">
+          <div class="portfolio-num" style="color: var(--accent-cyan);">PART 06 &bull; CURRENT REPO</div>
+          <h4>Query Tuning Clinic</h4>
+          <p>Index internals, correlated subquery elimination, declarative partitioning, and PgBouncer.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Lightbox Modal for DBeaver Screenshot -->
+  <div class="modal" id="plan-modal">
+    <div class="modal-content">
+      <button class="modal-close" id="close-plan-modal">&times;</button>
+      <img src="assets/dbeaver_execution_plan.png" alt="DBeaver Visual Execution Plan Full Resolution">
+    </div>
+  </div>
+
+  <!-- Global Toast Notification -->
+  <div class="toast" id="global-toast">
+    <span>✓</span> <span>Copied to clipboard!</span>
+  </div>
+
+  <!-- Footer -->
+  <footer class="footer">
+    <div class="container">
+      <div class="footer-grid">
+        <div>
+          <div class="brand" style="margin-bottom: 1rem;">
+            <svg viewBox="0 0 64 64" fill="none" width="28" height="28">
+              <rect width="64" height="64" rx="14" fill="#0f172a" stroke="#334155" stroke-width="2"/>
+              <ellipse cx="32" cy="19" rx="16" ry="6" fill="#1e293b" stroke="#38bdf8" stroke-width="2.5" />
+              <polygon points="40,24 29,38 36,38 32,54 47,36 39,36" fill="#f59e0b" />
+            </svg>
+            <span>Query Tuning Clinic</span>
+          </div>
+          <p style="color: var(--text-muted); max-width: 440px; font-size: 0.85rem; line-height: 1.6;">
+            A production PostgreSQL 15 performance optimization case study demonstrating a multi-stage systematic tuning of a 1.2M-row e-commerce database.
+          </p>
+        </div>
+
+        <div>
+          <h5 style="color: var(--text-main); margin-bottom: 0.75rem; font-size: 0.9rem;">Clinic Navigation</h5>
+          <ul style="list-style: none; font-size: 0.85rem; line-height: 2;">
+            <li><a href="#benchmarks">Benchmark Metrics</a></li>
+            <li><a href="#dbeaver-plan">Visual Execution Plan</a></li>
+            <li><a href="#stages">6 Tuning Stages</a></li>
+            <li><a href="#indexes">Index Matrix</a></li>
+            <li><a href="#simulator">Interactive Sandbox</a></li>
+          </ul>
+        </div>
+
+        <div>
+          <h5 style="color: var(--text-main); margin-bottom: 0.75rem; font-size: 0.9rem;">Repository & License</h5>
+          <ul style="list-style: none; font-size: 0.85rem; line-height: 2;">
+            <li><a href="https://github.com/crnjihia/query-tuning-clinic" target="_blank" rel="noopener noreferrer">GitHub Repository</a></li>
+            <li><a href="https://github.com/crnjihia/query-tuning-clinic/blob/main/LICENSE" target="_blank" rel="noopener noreferrer">MIT License</a></li>
+            <li><a href="https://github.com/crnjihia/query-tuning-clinic/actions" target="_blank" rel="noopener noreferrer">CI Workflows</a></li>
+            <li><a href="#quickstart">Docker Setup</a></li>
+          </ul>
+        </div>
+      </div>
+
+      <div class="footer-bottom">
+        <div>
+          &copy; 2026 Christopher Njihia &bull; MIT License. Built for PostgreSQL Performance Engineers.
+        </div>
+        <div>
+          Hosted on <a href="https://pages.github.com/" target="_blank" rel="noopener noreferrer" style="color: var(--accent-cyan);">GitHub Pages</a>
+        </div>
+      </div>
+    </div>
+  </footer>
+
+  <!-- Scripts -->
+  <script src="app.js"></script>
+</body>
+</html>

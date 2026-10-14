@@ -4,6 +4,7 @@
 [![PgBouncer](https://img.shields.io/badge/PgBouncer-Transaction_Mode-orange)](https://www.pgbouncer.org/)
 [![Docker](https://img.shields.io/badge/Docker_Compose-Supported-2496ED?logo=docker&logoColor=white)](https://www.docker.com/)
 [![CI](https://img.shields.io/badge/CI-Automated_Suite-brightgreen)](https://github.com/crnjihia/query-tuning-clinic/actions)
+[![GitHub Pages](https://img.shields.io/badge/GitHub%20Pages-Live%20Showcase-0ea5e9?logo=githubpages&logoColor=white)](https://crnjihia.github.io/query-tuning-clinic/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 A structured, production-grade PostgreSQL performance engineering case study demonstrating a multi-stage systematic optimization of a **1.2-million-row** e-commerce database. This repository walks through diagnosing catastrophic full-table bottlenecks, designing targeted indexing strategies (B-tree, Functional, GIN, Partial, Covering, BRIN), rewriting execution plans, denormalizing via materialized views, implementing declarative table partitioning, and benchmarking transaction connection pooling with PgBouncer.
